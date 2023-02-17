@@ -1283,6 +1283,7 @@ cc_library(
         "transforms/tpu_sharding_identification_pass.cc",
         "transforms/tpu_space_to_depth_pass.cc",
         "transforms/tpu_update_embedding_enqueue_op_inputs.cc",
+        "transforms/tpu_validate_inputs.cc",
         "transforms/tpu_variable_runtime_reformatting.cc",
         "transforms/update_control_dependencies.cc",
         "transforms/verify_suitable_for_graph_export_pass.cc",
@@ -1313,6 +1314,7 @@ cc_library(
     deps = [
         ":attribute_utils",
         ":bridge_logger",
+        ":cluster_util",
         ":convert_tensor",
         ":convert_type",
         ":decompose_resource_ops",
@@ -2188,7 +2190,6 @@ COMPILE_MLIR_UTIL_DEPS = [
     "//tensorflow/compiler/mlir/xla:tf_xla_passes",
     "//tensorflow/compiler/xla/mlir/framework/transforms:passes",
     "//tensorflow/compiler/xla/translate/mhlo_to_hlo:type_to_shape",
-    "//tensorflow/compiler/mlir/xla:adjust_layout",
     "//tensorflow/compiler/mlir/xla:xla_legalize_tf",
     "//tensorflow/compiler/mlir/xla:xla_legalize_tf_with_tf2xla",
     "//tensorflow/compiler/tf2xla:common",
@@ -2356,6 +2357,35 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+    ],
+)
+
+cc_library(
+    name = "cluster_util",
+    srcs = ["utils/cluster_util.cc"],
+    hdrs = ["utils/cluster_util.h"],
+    deps = [
+        ":tensorflow_analysis",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+tf_cc_test(
+    name = "cluster_util_test",
+    size = "small",
+    srcs = ["utils/cluster_util_test.cc"],
+    deps = [
+        ":cluster_util",
+        ":serialize_mlir_module_utils",
+        ":tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core/platform:errors",
+        "//tensorflow/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:FuncDialect",
     ],
 )
 
@@ -2705,7 +2735,11 @@ cc_library(
     hdrs = ["transforms/set_tpu_infeed_layout.h"],
     deps = [
         "//tensorflow/compiler/mlir/tensorflow",
-        "//tensorflow/compiler/mlir/xla:adjust_layout",
+        "//tensorflow/compiler/xla:shape_util",
+        "//tensorflow/compiler/xla/mlir_hlo",
+        "//tensorflow/compiler/xla/stream_executor/tpu:c_api_conversions",
+        "//tensorflow/compiler/xla/stream_executor/tpu:tpu_api",
+        "//tensorflow/compiler/xla/translate/mhlo_to_hlo:type_to_shape",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
     ],

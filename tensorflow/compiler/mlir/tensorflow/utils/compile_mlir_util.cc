@@ -54,7 +54,6 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/utils/error_util.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/serialize_mlir_module_utils.h"
 #include "tensorflow/compiler/mlir/tensorflow/utils/translate_utils.h"
-#include "tensorflow/compiler/mlir/xla/transforms/adjust_layout.h"
 #include "tensorflow/compiler/mlir/xla/transforms/passes.h"
 #include "tensorflow/compiler/mlir/xla/transforms/xla_legalize_targets.h"
 #include "tensorflow/compiler/tf2xla/layout_util.h"
@@ -337,18 +336,12 @@ void AddLegalizationPasses(mlir::OpPassManager& pm, bool legalize_chlo,
       /*allow_partial_conversion=*/true, legalize_chlo,
       /*tf2xla_fallback_device_type=*/device_type, prefer_tf2xla));
 
-  // TODO(b/188389290): Delete this second one. We run this AGAIN because some
-  // TF ops get legalized in the first round, but createLegalizeTFPass is a
-  // staright conversion. Some ops that weren't eligible for legalization in
-  // the first pass can get legalized the second time after lowering to MHLO.
-  pm.addNestedPass<mlir::func::FuncOp>(mlir::mhlo::createLegalizeTFPass(
-      /*allow_partial_conversion=*/true, legalize_chlo,
-      /*tf2xla_fallback_device_type=*/device_type, prefer_tf2xla));
-
   // This has to run after legalization.
-  pm.addNestedPass<mlir::func::FuncOp>(mlir::mhlo::CreateAdjustLayoutPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::mhlo::CreateInfeedsOpsXlaAdjustLayoutPass());
 
   // This has to run after legalization to delete non legal but dead ops.
+  // This must run before Shape Inference.
   pm.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
 
   // Run shape inference pass to propagate shapes through tensor_cast operations
@@ -367,6 +360,9 @@ void CreateConvertMlirToXlaHloPipeline(
         custom_legalization_passes,
     bool allow_partial_conversion) {
   bool legalize_chlo = true;
+
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::mhlo::CreateTFXLADeviceSpecificTransformsPass(device_type));
 
   // Note that the region-based control-flow produced here still contains
   // function call ops which get inlined by the subsequent inliner pass.

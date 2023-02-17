@@ -31,6 +31,8 @@ limitations under the License.
 // IWYU pragma: no_include "llvm/Config/Disassemblers.def.inc"
 // IWYU pragma: no_include "llvm/Config/Targets.def.inc"
 
+#include <optional>
+
 #include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
@@ -1025,7 +1027,7 @@ void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
       config.debug_options().xla_backend_extra_options());
 }
 
-Status LowerMLIRModule(mlir::ModuleOp mlir_module,
+Status LowerMLIRModule(HloModule* module, mlir::ModuleOp mlir_module,
                        mlir::MLIRContext& mlir_context) {
   LoadMLIRDialects(mlir_context);
   mlir::PassManager pm(&mlir_context);
@@ -1047,6 +1049,8 @@ Status LowerMLIRModule(mlir::ModuleOp mlir_module,
       GetDebugOptionsFromFlags().xla_cpu_enable_mlir_tiling_and_fusion();
   options.sparse_bufferization = false;
   options.outline_with_xla_framework = true;
+  options.experimental_deallocation =
+      GetDebugOptionsFromFlags().xla_cpu_enable_experimental_deallocation();
   TF_RETURN_IF_ERROR(CreateHloXlaRuntimePipeline(xla_pm, options));
 
   runtime::CpuPipelineOptions cpu_pipeline_opts;
@@ -1549,8 +1553,8 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   std::unique_ptr<llvm::TargetMachine> target_machine =
       absl::WrapUnique(target->createTargetMachine(
           triple.getTriple(), options.cpu_name(), options.features(),
-          CompilerTargetOptions(modules[0]->config()), reloc_model, llvm::None,
-          opt_level));
+          CompilerTargetOptions(modules[0]->config()), reloc_model,
+          std::nullopt, opt_level));
 
   // Compile must be thread-safe so create a new LLVM context for the module.
   mlir::MLIRContext mlir_context;
@@ -1609,13 +1613,16 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       TF_ASSIGN_OR_RETURN(
           auto mlir_module,
           createMLIRModule(module, mlir_context, assignment.get()));
-      TF_RETURN_IF_ERROR(LowerMLIRModule(*mlir_module, mlir_context));
+      TF_RETURN_IF_ERROR(LowerMLIRModule(module, *mlir_module, mlir_context));
 
       llvm::cast<mlir::LLVM::LLVMFuncOp>(
           mlir_module->lookupSymbol("main_xla_framework"))
           .setName(options.entry_point_name());
 
       llvm_module = mlir::translateModuleToLLVMIR(*mlir_module, llvm_context);
+      if (!llvm_module) {
+        return InternalError("Failed to translate module to LLVM IR");
+      }
       // Set missing information
       llvm_module->setDataLayout(target_machine->createDataLayout());
       llvm_module->setTargetTriple(triple.getTriple());
